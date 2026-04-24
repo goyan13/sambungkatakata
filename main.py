@@ -34,59 +34,19 @@ public_room_id = None
 DATA_FILE = "data.json"
 leaderboard = {}
 
+# =========================
+# WORDS
+# =========================
 def load_words():
-    try:
-        with open("words.txt", "r", encoding="utf-8) as f:
-                  return set(w.strip().lower() for w in f if w.strip())
-        except:
-            return set()
-def generate_words():
-    base_words = [
-        "kucing","gajah","harimau","ular","rumah","mobil",
-        "makan","minum","ikan","nasi","air","roti",
-        "lampu","lemari","listrik","lumba","laut","langit",
-        "buku","bola","bunga","burung","batu",
-        "cinta","cacing","cermin",
-        "daging","dapur","daun",
-        "elang","emas",
-        "fajar",
-        "gula",
-        "hutan",
-        "jamur","jalan",
-        "kaki","kursi","kertas",
-        "mata","meja",
-        "naga","nyamuk",
-        "obat",
-        "padi","pisang",
-        "rusa",
-        "sapi",
-        "tangan",
-        "udang",
-        "vaksin",
-        "waktu",
-        "yoyo",
-        "zebra"
-    ]
-
-    words = set(base_words)
-
-    # generate variasi biar jadi banyak
-    for w in base_words:
-        words.add(w + "an")
-        words.add("ber" + w)
-        words.add("me" + w)
-        words.add(w + "nya")
-
-    
-def load_big_words():
     try:
         with open("words.txt", "r", encoding="utf-8") as f:
             return set(w.strip().lower() for w in f if w.strip())
     except:
-        return set()
-
-
-VALID_WORDS = load_big_words()
+        return {
+            "kucing","gajah","harimau","ular","rumah","mobil",
+            "makan","minum","ikan","nasi","air","roti",
+            "lampu","lemari","listrik","lumba","laut","langit"
+        }
 
 VALID_WORDS = load_words()
 
@@ -138,12 +98,13 @@ def add_score(user_id, name):
     leaderboard[uid]["score"] += 1
     save_data()
 
+
 def suggest_word(last_letter):
     for w in VALID_WORDS:
         if w.startswith(last_letter):
             return w
     return None
-    
+
 # =========================
 # START
 # =========================
@@ -180,7 +141,7 @@ async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(
-        f"🔐 Room dibuat!\nKode: {code}\n👤 Kamu: {user.first_name}\nGunakan /join {code}"
+        f"🔐 Room dibuat!\nKode: {code}\nGunakan /join {code}"
     )
 
 
@@ -227,7 +188,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    # PRIVATE INFO
     if query.data == "private":
         await context.bot.send_message(
             chat_id=user.id,
@@ -235,7 +195,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # QUICK MATCH
     if query.data == "quick":
 
         if waiting_player is None:
@@ -245,7 +204,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "chat_id": user.id
             }
             await query.edit_message_text("⏳ Menunggu lawan...")
-
         else:
             room_id = str(uuid.uuid4())
 
@@ -269,12 +227,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("🎉 Lawan ditemukan!")
             await start_game(context, room_id)
 
-    # PUBLIC ROOM
     elif query.data == "public":
 
         if public_room_id is None or public_room_id not in rooms or rooms[public_room_id]["started"]:
-            new_room_id = str(uuid.uuid4())
-            public_room_id = new_room_id
+            public_room_id = str(uuid.uuid4())
 
             rooms[public_room_id] = {
                 "players": [],
@@ -284,10 +240,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "started": False
             }
 
-        room = rooms.get(public_room_id)
-        if not room:
-            await query.edit_message_text("❌ Room error, coba lagi!")
-            return
+        room = rooms[public_room_id]
 
         if get_player(room, user.id):
             await query.answer("Kamu sudah join!")
@@ -348,33 +301,30 @@ async def handle_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current = room["players"][room["turn"]]
 
         if user.id != current["id"]:
-            continue  # Check next room, not this one
+            continue
 
         last = room["current_word"]
-        
+
+        # ANTI STUCK
         if not any(w.startswith(last[-1]) for w in VALID_WORDS):
-    await broadcast(context, room, "⚠️ Tidak ada kata lanjutan, game di-reset!")
-    await start_game(context, room_id)
-    return
+            await broadcast(context, room, "⚠️ Tidak ada kata lanjutan, game di-reset!")
+            await start_game(context, room_id)
+            return
 
         if text not in VALID_WORDS:
             await update.message.reply_text("❌ Kata tidak valid!")
             return
 
         if text[0] != last[-1]:
-            await update.message.reply_text("❌ Huruf salah!")
+            suggestion = suggest_word(last[-1])
+            await update.message.reply_text(
+                f"❌ Huruf salah!\nContoh: {suggestion}"
+            )
             return
 
         if text in room["used_words"]:
             await update.message.reply_text("❌ Sudah dipakai!")
             return
-
-    if text[0] != last[-1]:
-            suggestion = suggest_word(last[-1])
-            await update.message.reply_text(
-        f"❌ Huruf salah!\nContoh: {suggestion}"
-    )
-    return
 
         room["current_word"] = text
         room["used_words"].append(text)
@@ -443,7 +393,6 @@ async def timeout_turn(context):
         f"⏰ {current['name']} kehabisan waktu!\nGiliran: {next_p['name']}"
     )
 
-    # Start timer for next turn
     await start_turn_timer(context, room_id)
 
 # =========================
