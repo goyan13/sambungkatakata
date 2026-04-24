@@ -70,6 +70,7 @@ async def start_game(update, context, room_id):
         text=f"🚀 Game dimulai!\n\nKata awal: *{first_word}*\n\nGiliran: {room['players'][0]['name']}",
         parse_mode="Markdown"
     )
+    await start_turn_timer(context, room_id)
 
 # =========================
 # HANDLE KATA
@@ -105,6 +106,8 @@ async def handle_word(update, context):
             room["current_word"] = text
             room["used_words"].append(text)
 
+            await start_turn_timer(context, room_id)
+
             # pindah turn
             room["turn"] = (room["turn"] + 1) % len(room["players"])
             next_player = room["players"][room["turn"]]
@@ -117,3 +120,47 @@ async def handle_word(update, context):
 from telegram.ext import MessageHandler, filters
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
+
+
+TURN_TIME = 15  # detik
+async def start_turn_timer(context, room_id):
+    job_name = f"timer_{room_id}"
+
+    # hapus timer lama
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+
+    # buat timer baru
+    context.job_queue.run_once(
+        timeout_turn,
+        TURN_TIME,
+        data={"room_id": room_id},
+        name=job_name
+    )
+
+async def timeout_turn(context):
+    job_data = context.job.data
+    room_id = job_data["room_id"]
+
+    room = rooms.get(room_id)
+    if not room:
+        return
+
+    current_player = room["players"][room["turn"]]
+
+    # pindah giliran
+    room["turn"] = (room["turn"] + 1) % len(room["players"])
+    next_player = room["players"][room["turn"]]
+
+    await context.bot.send_message(
+        chat_id=room["chat_id"],
+        text=f"⏰ {current_player['name']} kehabisan waktu!\n\nGiliran: {next_player['name']}"
+    )
+
+    # mulai timer baru
+    await start_turn_timer(context, room_id)
+
+await start_turn_timer(context, room_id)
+
+
