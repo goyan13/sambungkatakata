@@ -34,10 +34,61 @@ public_room_id = None
 DATA_FILE = "data.json"
 leaderboard = {}
 
-VALID_WORDS = {
-    "kucing","gajah","harimau","ular","rumah","mobil",
-    "makan","minum","ikan","nasi","air","roti"
-}
+def load_words():
+    try:
+        with open("words.txt", "r", encoding="utf-8) as f:
+                  return set(w.strip().lower() for w in f if w.strip())
+        except:
+            return set()
+def generate_words():
+    base_words = [
+        "kucing","gajah","harimau","ular","rumah","mobil",
+        "makan","minum","ikan","nasi","air","roti",
+        "lampu","lemari","listrik","lumba","laut","langit",
+        "buku","bola","bunga","burung","batu",
+        "cinta","cacing","cermin",
+        "daging","dapur","daun",
+        "elang","emas",
+        "fajar",
+        "gula",
+        "hutan",
+        "jamur","jalan",
+        "kaki","kursi","kertas",
+        "mata","meja",
+        "naga","nyamuk",
+        "obat",
+        "padi","pisang",
+        "rusa",
+        "sapi",
+        "tangan",
+        "udang",
+        "vaksin",
+        "waktu",
+        "yoyo",
+        "zebra"
+    ]
+
+    words = set(base_words)
+
+    # generate variasi biar jadi banyak
+    for w in base_words:
+        words.add(w + "an")
+        words.add("ber" + w)
+        words.add("me" + w)
+        words.add(w + "nya")
+
+    
+def load_big_words():
+    try:
+        with open("words.txt", "r", encoding="utf-8") as f:
+            return set(w.strip().lower() for w in f if w.strip())
+    except:
+        return set()
+
+
+VALID_WORDS = load_big_words()
+
+VALID_WORDS = load_words()
 
 # =========================
 # SAVE / LOAD
@@ -87,6 +138,12 @@ def add_score(user_id, name):
     leaderboard[uid]["score"] += 1
     save_data()
 
+def suggest_word(last_letter):
+    for w in VALID_WORDS:
+        if w.startswith(last_letter):
+            return w
+    return None
+    
 # =========================
 # START
 # =========================
@@ -294,6 +351,11 @@ async def handle_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue  # Check next room, not this one
 
         last = room["current_word"]
+        
+        if not any(w.startswith(last[-1]) for w in VALID_WORDS):
+    await broadcast(context, room, "⚠️ Tidak ada kata lanjutan, game di-reset!")
+    await start_game(context, room_id)
+    return
 
         if text not in VALID_WORDS:
             await update.message.reply_text("❌ Kata tidak valid!")
@@ -306,6 +368,13 @@ async def handle_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text in room["used_words"]:
             await update.message.reply_text("❌ Sudah dipakai!")
             return
+
+    if text[0] != last[-1]:
+            suggestion = suggest_word(last[-1])
+            await update.message.reply_text(
+        f"❌ Huruf salah!\nContoh: {suggestion}"
+    )
+    return
 
         room["current_word"] = text
         room["used_words"].append(text)
