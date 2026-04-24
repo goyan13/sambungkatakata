@@ -1,27 +1,38 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-import os
-import logging
-
-# Logging biar gampang debug di Railway
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes, MessageHandler, filters
 )
+import os, logging, random, uuid
+
+# =========================
+# CONFIG
+# =========================
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
-
 if not TOKEN:
-    raise ValueError("BOT_TOKEN belum diset di Railway Variables!")
-print("TOKEN", TOKEN)
+    raise ValueError("BOT_TOKEN belum diset!")
+
+TURN_TIME = 15
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-# /start command
+# =========================
+# GLOBAL
+# =========================
+rooms = {}
+waiting_player = None
+public_room_id = None
+MAX_PLAYER = 5
+
+# =========================
+# START
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
-        [InlineKeyboardButton("👥 Buat Room", callback_data="create")]
+        [InlineKeyboardButton("👥 Room Publik", callback_data="create")]
     ]
 
     await update.message.reply_text(
@@ -29,36 +40,94 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# tombol handler
+# =========================
+# BUTTON
+# =========================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global waiting_player, public_room_id
+
     query = update.callback_query
     await query.answer()
 
+    user = query.from_user
+
+    # ================= QUICK MATCH =================
     if query.data == "quick":
-        await query.edit_message_text("⏳ Mencari lawan...")
 
+        if waiting_player is None:
+            waiting_player = {
+                "id": user.id,
+                "name": user.first_name,
+                "chat_id": query.message.chat_id
+            }
+            await query.edit_message_text("⏳ Menunggu lawan...")
+
+        else:
+            room_id = str(uuid.uuid4())
+
+            player1 = waiting_player
+            player2 = {
+                "id": user.id,
+                "name": user.first_name,
+                "chat_id": query.message.chat_id
+            }
+
+            rooms[room_id] = {
+                "players": [player1, player2],
+                "turn": 0,
+                "current_word": "",
+                "used_words": [],
+                "chat_id": player1["chat_id"],
+                "started": False
+            }
+
+            waiting_player = None
+
+            await query.edit_message_text("🎉 Lawan ditemukan!")
+            await start_game(context, room_id)
+
+    # ================= ROOM PUBLIK =================
     elif query.data == "create":
-        await query.edit_message_text("👥 Mode room (coming soon)")
 
-# register handler
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(button_handler))
+        if public_room_id is None:
+            public_room_id = str(uuid.uuid4())
 
-# run bot
+            rooms[public_room_id] = {
+                "players": [],
+                "turn": 0,
+                "current_word": "",
+                "used_words": [],
+                "chat_id": query.message.chat_id,
+                "started": False
+            }
 
-app.run_polling()
+        room = rooms[public_room_id]
 
-import random
+        # sudah join?
+        if any(p["id"] == user.id for p in room["players"]):
+            await query.answer("Kamu sudah join!")
+            return
 
-rooms = {}
+        # tambah player
+        room["players"].append({
+            "id": user.id,
+            "name": user.first_name
+        })
+
+        await query.edit_message_text(
+            f"👥 Room Publik\n\nPlayer: {len(room['players'])}/{MAX_PLAYER}"
+        )
+
+        # auto start
+        if len(room["players"]) >= 2 and not room["started"]:
+            room["started"] = True
+            await start_game(context, public_room_id)
 
 # =========================
 # START GAME
 # =========================
-async def start_game(update, context, room_id):
+async def start_game(context, room_id):
     room = rooms[room_id]
-
-    await start_turn_timer(context, room_id)
 
     words = ["kucing", "mobil", "rumah", "makan", "minum"]
     first_word = random.choice(words)
@@ -67,76 +136,66 @@ async def start_game(update, context, room_id):
     room["used_words"] = [first_word]
     room["turn"] = 0
 
-    await context.bot.send_message(
-        chat_id=room["chat_id"],
-        text=f"🚀 Game dimulai!\n\nKata awal: *{first_word}*\n\nGiliran: {room['players'][0]['name']}",
-        parse_mode="Markdown"
-    )
-    
+    player_names = "\n".join([p["name"] for p in room["players"]])
 
-# =========================
-# HANDLE KATA
-# =========================
-async def handle_word(update, context):
     await start_turn_timer(context, room_id)
 
+    await context.bot.send_message(
+        chat_id=room["chat_id"],
+        text=f"🚀 Game dimulai!\n\nPemain:\n{player_names}\n\nKata: *{first_word}*\n\nGiliran: {room['players'][0]['name']}",
+        parse_mode="Markdown"
+    )
+
+# =========================
+# HANDLE WORD
+# =========================
+async def handle_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    text = update.message.text.lower()
+    text = update.message.text.lower().strip()
 
+    if not text or len(text) < 2:
+        return
 
-    # cari room user
     for room_id, room in rooms.items():
-        player_ids = [p["id"] for p in room["players"]]
+        if user.id in [p["id"] for p in room["players"]]:
 
-        if user.id in player_ids:
             turn_player = room["players"][room["turn"]]
 
-            # cek giliran
             if user.id != turn_player["id"]:
                 return
 
             last_word = room["current_word"]
 
-            # validasi sambung kata
             if text[0] != last_word[-1]:
-                await update.message.reply_text("❌ Huruf tidak cocok!")
+                await update.message.reply_text("❌ Huruf salah!")
                 return
 
-            # cek sudah dipakai
             if text in room["used_words"]:
-                await update.message.reply_text("❌ Kata sudah dipakai!")
+                await update.message.reply_text("❌ Sudah dipakai!")
                 return
 
-            # valid
             room["current_word"] = text
             room["used_words"].append(text)
 
             await start_turn_timer(context, room_id)
 
-            # pindah turn
             room["turn"] = (room["turn"] + 1) % len(room["players"])
             next_player = room["players"][room["turn"]]
 
             await update.message.reply_text(
-                f"✅ Benar!\nKata sekarang: {text}\n\nGiliran: {next_player['name']}"
+                f"✅ {text}\nGiliran: {next_player['name']}"
             )
             return
 
-from telegram.ext import MessageHandler, filters
-
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
-
-
-TURN_TIME = 15  # detik
+# =========================
+# TIMER
+# =========================
 async def start_turn_timer(context, room_id):
     job_name = f"timer_{room_id}"
 
-    # hapus timer lama
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    for job in current_jobs:
+    for job in context.job_queue.get_jobs_by_name(job_name):
         job.schedule_removal()
 
-    # buat timer baru
     context.job_queue.run_once(
         timeout_turn,
         TURN_TIME,
@@ -145,21 +204,28 @@ async def start_turn_timer(context, room_id):
     )
 
 async def timeout_turn(context):
-    job_data = context.job.data
-    room_id = job_data["room_id"]
-
+    room_id = context.job.data["room_id"]
     room = rooms.get(room_id)
+
     if not room:
         return
 
-    current_player = room["players"][room["turn"]]
+    current = room["players"][room["turn"]]
 
-    # pindah giliran
     room["turn"] = (room["turn"] + 1) % len(room["players"])
-    next_player = room["players"][room["turn"]]
+    next_p = room["players"][room["turn"]]
 
     await context.bot.send_message(
         chat_id=room["chat_id"],
-        text=f"⏰ {current_player['name']} kehabisan waktu!\n\nGiliran: {next_player['name']}"
+        text=f"⏰ {current['name']} kehabisan waktu!\nGiliran: {next_p['name']}"
     )
 
+# =========================
+# HANDLER
+# =========================
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button_handler))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
+
+print("Bot jalan...")
+app.run_polling()
