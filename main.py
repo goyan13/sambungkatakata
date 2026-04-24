@@ -31,9 +31,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# BUTTON
+# CREATE PRIVATE ROOM
 # =========================
+async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = str(uuid.uuid4())[:4]
 
+    rooms[code] = {
+        "players": [],
+        "turn": 0,
+        "current_word": "",
+        "used_words": [],
+        "started": False
+    }
+
+    await update.message.reply_text(
+        f"🔐 Room dibuat!\nKode: {code}\nGunakan /join {code}"
+    )
+
+# =========================
+# JOIN PRIVATE ROOM
+# =========================
 async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
 
@@ -68,6 +85,10 @@ async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(room["players"]) >= 2 and not room["started"]:
         room["started"] = True
         await start_game(context, code)
+
+# =========================
+# BUTTON HANDLER
+# =========================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global waiting_player, public_room_id
 
@@ -76,6 +97,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
+    # QUICK MATCH
     if query.data == "quick":
         if waiting_player is None:
             waiting_player = {
@@ -83,7 +105,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "name": user.first_name,
                 "chat_id": user.id
             }
-            await query.edit_message_text("Menunggu lawan...")
+            await query.edit_message_text("⏳ Menunggu lawan...")
         else:
             room_id = str(uuid.uuid4())
 
@@ -104,12 +126,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             waiting_player = None
 
-            await query.edit_message_text("Game dimulai!")
+            await query.edit_message_text("🎉 Lawan ditemukan!")
             await start_game(context, room_id)
 
+    # PUBLIC ROOM
     elif query.data == "public":
         if public_room_id is None or public_room_id not in rooms:
             public_room_id = str(uuid.uuid4())
+
             rooms[public_room_id] = {
                 "players": [],
                 "turn": 0,
@@ -120,6 +144,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         room = rooms[public_room_id]
 
+        # CEK DUPLIKAT
+        for p in room["players"]:
+            if p["id"] == user.id:
+                await query.answer("Kamu sudah join!")
+                return
+
         room["players"].append({
             "id": user.id,
             "name": user.first_name,
@@ -127,18 +157,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
         await query.edit_message_text(
-            f"Player: {len(room['players'])}"
+            f"👥 Room Publik\nPlayer: {len(room['players'])}"
         )
 
-        if len(room["players"]) >= 2:
+        if len(room["players"]) >= 2 and not room["started"]:
+            room["started"] = True
             await start_game(context, public_room_id)
 
 # =========================
 # HANDLER
 # =========================
-app.add_handler(CommandHandler("create", create_private))
-app.add_handler(CommandHandler("join", join_private))
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("create", create_private))  # FIX: sebelumnya error
+app.add_handler(CommandHandler("join", join_private))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
 
