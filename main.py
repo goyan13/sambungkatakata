@@ -3,7 +3,12 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ContextTypes, MessageHandler, filters
 )
-import os, logging, random, uuid
+
+import os
+import logging
+import random
+import uuid
+import json
 
 # =========================
 # CONFIG
@@ -15,16 +20,72 @@ if not TOKEN:
     raise ValueError("BOT_TOKEN belum diset!")
 
 TURN_TIME = 15
+MAX_PLAYER = 5
 
 app = ApplicationBuilder().token(TOKEN).build()
 
 # =========================
-# GLOBAL
+# GLOBAL STATE
 # =========================
 rooms = {}
 waiting_player = None
 public_room_id = None
-MAX_PLAYER = 5
+
+DATA_FILE = "data.json"
+leaderboard = {}
+
+VALID_WORDS = {
+    "kucing","gajah","harimau","ular","rumah","mobil",
+    "makan","minum","ikan","nasi","air","roti"
+}
+
+# =========================
+# SAVE / LOAD
+# =========================
+def load_data():
+    global leaderboard
+    try:
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+            leaderboard = data.get("leaderboard", {})
+    except:
+        leaderboard = {}
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump({"leaderboard": leaderboard}, f)
+
+load_data()
+
+# =========================
+# HELPER
+# =========================
+async def broadcast(context, room, text):
+    for p in room["players"]:
+        try:
+            await context.bot.send_message(
+                chat_id=p["chat_id"],
+                text=text,
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+
+
+def get_player(room, user_id):
+    for p in room["players"]:
+        if p["id"] == user_id:
+            return p
+    return None
+
+
+def add_score(user_id, name):
+    uid = str(user_id)
+    if uid not in leaderboard:
+        leaderboard[uid] = {"name": name, "score": 0}
+
+    leaderboard[uid]["score"] += 1
+    save_data()
 
 # =========================
 # START
@@ -32,13 +93,71 @@ MAX_PLAYER = 5
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
-        [InlineKeyboardButton("👥 Room Publik", callback_data="create")]
+        [InlineKeyboardButton("👥 Room Publik", callback_data="public")],
+        [InlineKeyboardButton("🔐 Room Private", callback_data="private")]
     ]
 
     await update.message.reply_text(
-        "🎮 Sambung Kata\n\nPilih mode:",
+        "🎮 *Sambung Kata*\n\nPilih mode:",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+# =========================
+# PRIVATE ROOM
+# =========================
+async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = str(random.randint(1000, 9999))
+    user = update.message.from_user
+
+    rooms[code] = {
+        "players": [{
+            "id": user.id,
+            "name": user.first_name,
+            "chat_id": user.id
+        }],
+        "turn": 0,
+        "current_word": "",
+        "used_words": [],
+        "started": False
+    }
+
+    await update.message.reply_text(
+        f"🔐 Room dibuat!\nKode: {code}\n👤 Kamu: {user.first_name}\nGunakan /join {code}"
+    )
+
+
+async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+
+    if not args:
+        await update.message.reply_text("Masukkan kode room!")
+        return
+
+    code = args[0]
+
+    if code not in rooms:
+        await update.message.reply_text("Room tidak ditemukan!")
+        return
+
+    room = rooms[code]
+    user = update.message.from_user
+
+    if get_player(room, user.id):
+        await update.message.reply_text("Kamu sudah di room!")
+        return
+
+    room["players"].append({
+        "id": user.id,
+        "name": user.first_name,
+        "chat_id": user.id
+    })
+
+    await update.message.reply_text(f"Masuk room {code}")
+
+    if len(room["players"]) >= 2 and not room["started"]:
+        room["started"] = True
+        await start_game(context, code)
 
 # =========================
 # BUTTON
@@ -51,34 +170,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    # ================= QUICK MATCH =================
+    # PRIVATE INFO
+    if query.data == "private":
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="Gunakan /create untuk buat room private"
+        )
+        return
+
+    # QUICK MATCH
     if query.data == "quick":
 
         if waiting_player is None:
             waiting_player = {
                 "id": user.id,
                 "name": user.first_name,
-                "chat_id": query.message.chat_id
+                "chat_id": user.id
             }
             await query.edit_message_text("⏳ Menunggu lawan...")
 
         else:
             room_id = str(uuid.uuid4())
 
-            player1 = waiting_player
-            player2 = {
-                "id": user.id,
-                "name": user.first_name,
-                "chat_id": query.message.chat_id
-            }
-
             rooms[room_id] = {
-                "players": [player1, player2],
+                "players": [
+                    waiting_player,
+                    {
+                        "id": user.id,
+                        "name": user.first_name,
+                        "chat_id": user.id
+                    }
+                ],
                 "turn": 0,
                 "current_word": "",
                 "used_words": [],
-                "chat_id": player1["chat_id"],
-                "started": False
+                "started": True
             }
 
             waiting_player = None
@@ -86,39 +212,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("🎉 Lawan ditemukan!")
             await start_game(context, room_id)
 
-    # ================= ROOM PUBLIK =================
-    elif query.data == "create":
+    # PUBLIC ROOM
+    elif query.data == "public":
 
-        if public_room_id is None:
-            public_room_id = str(uuid.uuid4())
+        if public_room_id is None or public_room_id not in rooms or rooms[public_room_id]["started"]:
+            new_room_id = str(uuid.uuid4())
+            public_room_id = new_room_id
 
             rooms[public_room_id] = {
                 "players": [],
                 "turn": 0,
                 "current_word": "",
                 "used_words": [],
-                "chat_id": query.message.chat_id,
                 "started": False
             }
 
-        room = rooms[public_room_id]
+        room = rooms.get(public_room_id)
+        if not room:
+            await query.edit_message_text("❌ Room error, coba lagi!")
+            return
 
-        # sudah join?
-        if any(p["id"] == user.id for p in room["players"]):
+        if get_player(room, user.id):
             await query.answer("Kamu sudah join!")
             return
 
-        # tambah player
         room["players"].append({
             "id": user.id,
-            "name": user.first_name
+            "name": user.first_name,
+            "chat_id": user.id
         })
 
         await query.edit_message_text(
-            f"👥 Room Publik\n\nPlayer: {len(room['players'])}/{MAX_PLAYER}"
+            f"👥 Room Publik\nPlayer: {len(room['players'])}/{MAX_PLAYER}"
         )
 
-        # auto start
         if len(room["players"]) >= 2 and not room["started"]:
             room["started"] = True
             await start_game(context, public_room_id)
@@ -129,22 +256,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_game(context, room_id):
     room = rooms[room_id]
 
-    words = ["kucing", "mobil", "rumah", "makan", "minum"]
-    first_word = random.choice(words)
+    first_word = random.choice(list(VALID_WORDS))
 
     room["current_word"] = first_word
     room["used_words"] = [first_word]
     room["turn"] = 0
 
-    player_names = "\n".join([p["name"] for p in room["players"]])
+    players = "\n".join([p["name"] for p in room["players"]])
+
+    await broadcast(
+        context,
+        room,
+        f"🚀 *Game dimulai!*\n\nPemain:\n{players}\n\nKata: *{first_word}*\n\nGiliran: {room['players'][0]['name']}"
+    )
 
     await start_turn_timer(context, room_id)
-
-    await context.bot.send_message(
-        chat_id=room["chat_id"],
-        text=f"🚀 Game dimulai!\n\nPemain:\n{player_names}\n\nKata: *{first_word}*\n\nGiliran: {room['players'][0]['name']}",
-        parse_mode="Markdown"
-    )
 
 # =========================
 # HANDLE WORD
@@ -157,35 +283,62 @@ async def handle_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     for room_id, room in rooms.items():
-        if user.id in [p["id"] for p in room["players"]]:
+        player = get_player(room, user.id)
 
-            turn_player = room["players"][room["turn"]]
+        if not player:
+            continue
 
-            if user.id != turn_player["id"]:
-                return
+        current = room["players"][room["turn"]]
 
-            last_word = room["current_word"]
+        if user.id != current["id"]:
+            continue  # Check next room, not this one
 
-            if text[0] != last_word[-1]:
-                await update.message.reply_text("❌ Huruf salah!")
-                return
+        last = room["current_word"]
 
-            if text in room["used_words"]:
-                await update.message.reply_text("❌ Sudah dipakai!")
-                return
-
-            room["current_word"] = text
-            room["used_words"].append(text)
-
-            await start_turn_timer(context, room_id)
-
-            room["turn"] = (room["turn"] + 1) % len(room["players"])
-            next_player = room["players"][room["turn"]]
-
-            await update.message.reply_text(
-                f"✅ {text}\nGiliran: {next_player['name']}"
-            )
+        if text not in VALID_WORDS:
+            await update.message.reply_text("❌ Kata tidak valid!")
             return
+
+        if text[0] != last[-1]:
+            await update.message.reply_text("❌ Huruf salah!")
+            return
+
+        if text in room["used_words"]:
+            await update.message.reply_text("❌ Sudah dipakai!")
+            return
+
+        room["current_word"] = text
+        room["used_words"].append(text)
+
+        add_score(user.id, user.first_name)
+
+        room["turn"] = (room["turn"] + 1) % len(room["players"])
+        next_p = room["players"][room["turn"]]
+
+        await broadcast(
+            context,
+            room,
+            f"✅ *{player['name']}*: {text}\nGiliran: {next_p['name']}"
+        )
+
+        await start_turn_timer(context, room_id)
+        return
+
+# =========================
+# LEADERBOARD
+# =========================
+async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not leaderboard:
+        await update.message.reply_text("Belum ada skor!")
+        return
+
+    text = "🏆 Leaderboard\n\n"
+    sorted_lb = sorted(leaderboard.values(), key=lambda x: x["score"], reverse=True)
+
+    for i, p in enumerate(sorted_lb[:10], 1):
+        text += f"{i}. {p['name']} - {p['score']}\n"
+
+    await update.message.reply_text(text)
 
 # =========================
 # TIMER
@@ -207,7 +360,7 @@ async def timeout_turn(context):
     room_id = context.job.data["room_id"]
     room = rooms.get(room_id)
 
-    if not room:
+    if not room or not room.get("started"):
         return
 
     current = room["players"][room["turn"]]
@@ -215,15 +368,22 @@ async def timeout_turn(context):
     room["turn"] = (room["turn"] + 1) % len(room["players"])
     next_p = room["players"][room["turn"]]
 
-    await context.bot.send_message(
-        chat_id=room["chat_id"],
-        text=f"⏰ {current['name']} kehabisan waktu!\nGiliran: {next_p['name']}"
+    await broadcast(
+        context,
+        room,
+        f"⏰ {current['name']} kehabisan waktu!\nGiliran: {next_p['name']}"
     )
+
+    # Start timer for next turn
+    await start_turn_timer(context, room_id)
 
 # =========================
 # HANDLER
 # =========================
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("create", create_private))
+app.add_handler(CommandHandler("join", join_private))
+app.add_handler(CommandHandler("rank", show_leaderboard))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
 
