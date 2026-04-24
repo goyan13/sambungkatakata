@@ -20,11 +20,11 @@ app = ApplicationBuilder().token(TOKEN).build()
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-keyboard = [
-    [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
-    [InlineKeyboardButton("👥 Room Publik", callback_data="public")],
-    [InlineKeyboardButton("🔐 Room Private", callback_data="private")]  # ← TAMBAH INI
-]
+    keyboard = [
+        [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
+        [InlineKeyboardButton("👥 Room Publik", callback_data="public")],
+        [InlineKeyboardButton("🔐 Room Private", callback_data="private")]
+    ]
 
     await update.message.reply_text(
         "🎮 Sambung Kata\n\nPilih mode:",
@@ -98,15 +98,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    # 🔐 PRIVATE ROOM (TARUH DI SINI)
+    # 🔐 PRIVATE ROOM
     if query.data == "private":
         await context.bot.send_message(
             chat_id=user.id,
             text="Gunakan:\n/create\n/join KODE"
         )
-        return    
+        return
 
-    # QUICK MATCH
+    # ⚡ QUICK MATCH
     if query.data == "quick":
         if waiting_player is None:
             waiting_player = {
@@ -138,7 +138,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("🎉 Lawan ditemukan!")
             await start_game(context, room_id)
 
-    # PUBLIC ROOM
+    # 👥 PUBLIC ROOM
     elif query.data == "public":
         if public_room_id is None or public_room_id not in rooms:
             public_room_id = str(uuid.uuid4())
@@ -177,7 +177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HANDLER
 # =========================
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("create", create_private))  # FIX: sebelumnya error
+app.add_handler(CommandHandler("create", create_private))
 app.add_handler(CommandHandler("join", join_private))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
