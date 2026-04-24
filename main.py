@@ -58,6 +58,8 @@ rooms = {}
 async def start_game(update, context, room_id):
     room = rooms[room_id]
 
+    await start_turn_timer(context, room_id)
+
     words = ["kucing", "mobil", "rumah", "makan", "minum"]
     first_word = random.choice(words)
 
@@ -70,14 +72,17 @@ async def start_game(update, context, room_id):
         text=f"🚀 Game dimulai!\n\nKata awal: *{first_word}*\n\nGiliran: {room['players'][0]['name']}",
         parse_mode="Markdown"
     )
-    await start_turn_timer(context, room_id)
+    
 
 # =========================
 # HANDLE KATA
 # =========================
 async def handle_word(update, context):
+    await start_turn_timer(context, room_id)
+
     user = update.message.from_user
     text = update.message.text.lower()
+
 
     # cari room user
     for room_id, room in rooms.items():
@@ -157,10 +162,4 @@ async def timeout_turn(context):
         chat_id=room["chat_id"],
         text=f"⏰ {current_player['name']} kehabisan waktu!\n\nGiliran: {next_player['name']}"
     )
-
-    # mulai timer baru
-    await start_turn_timer(context, room_id)
-
-await start_turn_timer(context, room_id)
-
 
