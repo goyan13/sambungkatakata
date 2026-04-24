@@ -20,10 +20,11 @@ app = ApplicationBuilder().token(TOKEN).build()
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
-        [InlineKeyboardButton("👥 Room Publik", callback_data="public")]
-    ]
+keyboard = [
+    [InlineKeyboardButton("⚡ Quick Match", callback_data="quick")],
+    [InlineKeyboardButton("👥 Room Publik", callback_data="public")],
+    [InlineKeyboardButton("🔐 Room Private", callback_data="private")]  # ← TAMBAH INI
+]
 
     await update.message.reply_text(
         "🎮 Sambung Kata\n\nPilih mode:",
@@ -96,6 +97,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user = query.from_user
+
+    # 🔐 PRIVATE ROOM (TARUH DI SINI)
+    if query.data == "private":
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="Gunakan:\n/create\n/join KODE"
+        )
+        return    
 
     # QUICK MATCH
     if query.data == "quick":
