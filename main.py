@@ -33,6 +33,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # BUTTON
 # =========================
+
+async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+
+    if not args:
+        await update.message.reply_text("Masukkan kode room!")
+        return
+
+    code = args[0]
+
+    if code not in rooms:
+        await update.message.reply_text("Room tidak ditemukan!")
+        return
+
+    room = rooms[code]
+    user = update.message.from_user
+
+    # sudah join?
+    for p in room["players"]:
+        if p["id"] == user.id:
+            await update.message.reply_text("Kamu sudah di room!")
+            return
+
+    # tambah player
+    room["players"].append({
+        "id": user.id,
+        "name": user.first_name,
+        "chat_id": user.id
+    })
+
+    await update.message.reply_text(f"Masuk room {code}")
+
+    if len(room["players"]) >= 2 and not room["started"]:
+        room["started"] = True
+        await start_game(context, code)
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global waiting_player, public_room_id
 
@@ -101,6 +136,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # HANDLER
 # =========================
+app.add_handler(CommandHandler("create", create_private))
+app.add_handler(CommandHandler("join", join_private))
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_word))
