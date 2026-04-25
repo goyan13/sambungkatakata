@@ -1,5 +1,4 @@
 import random
-
 from utils import broadcast, get_player, add_score, suggest_word, VALID_WORDS
 
 rooms = {}
@@ -7,14 +6,12 @@ waiting_player = None
 public_room_id = None
 
 TURN_TIME = 15
-MAX_PLAYER = 5
 
 # =========================
 # START GAME
 # =========================
 async def start_game(context, room_id):
     room = rooms.get(room_id)
-
     if not room or not room["players"]:
         return
 
@@ -28,13 +25,15 @@ async def start_game(context, room_id):
     room["used_words"] = [first_word]
     room["turn"] = 0
     room["started"] = True
+    room["lives"] = {p["id"]: 3 for p in room["players"]}
+    room["word_count"] = 1
 
     players = "\n".join([p["name"] for p in room["players"]])
 
     await broadcast(
         context,
         room,
-        f"🚀 *Game dimulai!*\n\nPemain:\n{players}\n\nKata: *{first_word}*\n\nGiliran: {room['players'][0]['name']}"
+        f"🚀 Game dimulai!\n\nPemain:\n{players}\n\nKata: {first_word}\n\nGiliran: {room['players'][0]['name']}"
     )
 
     await start_turn_timer(context, room_id)
@@ -67,28 +66,58 @@ async def handle_word(update, context):
 
         last = room["current_word"]
 
-        # ANTI STUCK
-        if not any(w.startswith(last[-1]) for w in VALID_WORDS):
-            await broadcast(context, room, "⚠️ Tidak ada kata lanjutan, game di-reset!")
-            await start_game(context, room_id)
-            return
+        # ================= PUNISH FUNCTION =================
+        async def punish():
+            room["lives"][user.id] -= 1
+            sisa = room["lives"][user.id]
 
+            if sisa <= 0:
+                room["players"] = [p for p in room["players"] if p["id"] != user.id]
+
+                await broadcast(context, room, f"💀 {user.first_name} kalah!")
+
+                if len(room["players"]) == 1:
+                    winner = room["players"][0]
+                    await broadcast(context, room, f"🏆 {winner['name']} MENANG!")
+                    rooms.pop(room_id)
+                    return True
+            else:
+                await update.message.reply_text(f"❌ Salah! Nyawa: {sisa}")
+
+            return False
+
+        # ================= VALIDATION =================
         if text not in VALID_WORDS:
-            await update.message.reply_text("❌ Kata tidak valid!")
+            if await punish():
+                return
             return
 
         if text[0] != last[-1]:
+            if await punish():
+                return
             suggestion = suggest_word(last[-1])
-            await update.message.reply_text(f"❌ Salah! Contoh: {suggestion}")
+            await update.message.reply_text(f"❌ Huruf salah! Contoh: {suggestion}")
             return
 
         if text in room["used_words"]:
+            if await punish():
+                return
             await update.message.reply_text("❌ Sudah dipakai!")
             return
 
-        # UPDATE GAME
+        # ================= UPDATE GAME =================
         room["current_word"] = text
         room["used_words"].append(text)
+        room["word_count"] += 1
+
+        # 🎉 EVENT 100 KATA
+        if room["word_count"] >= 100:
+            for p in room["players"]:
+                await context.bot.send_photo(
+                    chat_id=p["chat_id"],
+                    photo="https://i.imgur.com/3GvwNBf.png",
+                    caption="🔥 100 KATA TERCAPAI!"
+                )
 
         add_score(user.id, user.first_name)
 
@@ -98,7 +127,7 @@ async def handle_word(update, context):
         await broadcast(
             context,
             room,
-            f"✅ *{player['name']}*: {text}\nGiliran: {next_p['name']}"
+            f"✅ {player['name']}: {text}\nGiliran: {next_p['name']}"
         )
 
         await start_turn_timer(context, room_id)
@@ -108,6 +137,18 @@ async def handle_word(update, context):
 # TIMER
 # =========================
 async def start_turn_timer(context, room_id):
+    room = rooms.get(room_id)
+    if not room or not room["players"]:
+        return
+
+    current = room["players"][room["turn"]]
+
+    await broadcast(
+        context,
+        room,
+        f"⏱️ Giliran {current['name']} ({TURN_TIME} detik)"
+    )
+
     job_name = f"timer_{room_id}"
 
     for job in context.job_queue.get_jobs_by_name(job_name):
@@ -124,24 +165,32 @@ async def timeout_turn(context):
     room_id = context.job.data["room_id"]
     room = rooms.get(room_id)
 
-    if not room or not room.get("started"):
-        return
-
-    if not room["players"]:
-        rooms.pop(room_id, None)
+    if not room or not room["players"]:
         return
 
     current = room["players"][room["turn"]]
+    uid = current["id"]
 
-    room["turn"] = (room["turn"] + 1) % len(room["players"])
-    next_p = room["players"][room["turn"]]
+    room["lives"][uid] -= 1
 
-    await broadcast(
-        context,
-        room,
-        f"⏰ {current['name']} kehabisan waktu!\nGiliran: {next_p['name']}"
-    )
+    if room["lives"][uid] <= 0:
+        room["players"] = [p for p in room["players"] if p["id"] != uid]
 
+        await broadcast(context, room, f"💀 {current['name']} kalah!")
+
+        if len(room["players"]) == 1:
+            winner = room["players"][0]
+            await broadcast(context, room, f"🏆 {winner['name']} MENANG!")
+            rooms.pop(room_id)
+            return
+    else:
+        await broadcast(
+            context,
+            room,
+            f"⏰ {current['name']} telat! Nyawa: {room['lives'][uid]}"
+        )
+
+    room["turn"] = room["turn"] % len(room["players"])
     await start_turn_timer(context, room_id)
 
 # =========================
@@ -149,9 +198,6 @@ async def timeout_turn(context):
 # =========================
 async def show_room(context, room, code):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-    if not room["players"]:
-        return
 
     players = "\n".join([f"- {p['name']}" for p in room["players"]])
 
