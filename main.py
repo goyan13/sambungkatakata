@@ -38,8 +38,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = str(uuid.uuid4())[:4]
 
+    user = update.message.from_user
+
     rooms[code] = {
-        "players": [],
+        "players": [{
+            "id": user.id,
+            "name": user.first_name,
+            "chat_id": user.id
+        }],
         "turn": 0,
         "current_word": "",
         "used_words": [],
@@ -47,10 +53,10 @@ async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(
-        f"🔐 Room dibuat!\nKode: {code}\nGunakan /join {code}"
+        f"🔐 Room dibuat!\nKode: {code}"
     )
 
-await show_room(context, rooms[code], code)
+    await show_room(context, rooms[code], code)
 
 # =========================
 # JOIN PRIVATE ROOM
@@ -71,13 +77,11 @@ async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     room = rooms[code]
     user = update.message.from_user
 
-    # sudah join?
     for p in room["players"]:
         if p["id"] == user.id:
             await update.message.reply_text("Kamu sudah di room!")
             return
 
-    # tambah player
     room["players"].append({
         "id": user.id,
         "name": user.first_name,
@@ -86,9 +90,6 @@ async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"Masuk room {code}")
 
-    if len(room["players"]) >= 2 and not room["started"]:
-        room["started"] = True
-        await start_game(context, code)
     await show_room(context, room, code)
 
 # =========================
@@ -102,7 +103,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    # 🔐 PRIVATE ROOM
+    # 🔐 PRIVATE INFO
     if query.data == "private":
         await context.bot.send_message(
             chat_id=user.id,
@@ -110,45 +111,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-# ▶️ START GAME
-if query.data.startswith("start_"):
-    code = query.data.split("_")[1]
-    room = rooms.get(code)
+    # ▶️ START GAME
+    if query.data.startswith("start_"):
+        code = query.data.split("_")[1]
+        room = rooms.get(code)
 
-    if not room:
+        if not room:
+            return
+
+        if len(room["players"]) < 2:
+            await query.answer("Butuh 2 player!", show_alert=True)
+            return
+
+        room["started"] = True
+        await start_game(context, code)
         return
 
-    if len(room["players"]) < 2:
-        await query.answer("Butuh 2 player!", show_alert=True)
+    # ❌ LEAVE ROOM
+    if query.data.startswith("leave_"):
+        code = query.data.split("_")[1]
+        room = rooms.get(code)
+
+        if not room:
+            return
+
+        room["players"] = [p for p in room["players"] if p["id"] != user.id]
+
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="Kamu keluar dari room"
+        )
+
+        if not room["players"]:
+            rooms.pop(code)
+            return
+
+        await show_room(context, room, code)
         return
 
-    room["started"] = True
-    await start_game(context, code)
-    return
-
-
-# ❌ LEAVE ROOM
-if query.data.startswith("leave_"):
-    code = query.data.split("_")[1]
-    room = rooms.get(code)
-
-    if not room:
-        return
-
-    room["players"] = [p for p in room["players"] if p["id"] != user.id]
-
-    await context.bot.send_message(
-        chat_id=user.id,
-        text="Kamu keluar dari room"
-    )
-
-    if not room["players"]:
-        rooms.pop(code)
-        return
-
-    await show_room(context, room, code)
-    return
-    
     # ⚡ QUICK MATCH
     if query.data == "quick":
         if waiting_player is None:
@@ -196,7 +196,6 @@ if query.data.startswith("leave_"):
 
         room = rooms[public_room_id]
 
-        # CEK DUPLIKAT
         for p in room["players"]:
             if p["id"] == user.id:
                 await query.answer("Kamu sudah join!")
