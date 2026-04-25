@@ -7,6 +7,7 @@ from telegram.ext import (
 import os
 import uuid
 
+from game import show_room
 from game import (
     rooms, waiting_player, public_room_id,
     start_game, handle_word
@@ -49,6 +50,8 @@ async def create_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔐 Room dibuat!\nKode: {code}\nGunakan /join {code}"
     )
 
+await show_room(context, rooms[code], code)
+
 # =========================
 # JOIN PRIVATE ROOM
 # =========================
@@ -86,6 +89,7 @@ async def join_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(room["players"]) >= 2 and not room["started"]:
         room["started"] = True
         await start_game(context, code)
+    await show_room(context, room, code)
 
 # =========================
 # BUTTON HANDLER
@@ -106,6 +110,45 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+# ▶️ START GAME
+if query.data.startswith("start_"):
+    code = query.data.split("_")[1]
+    room = rooms.get(code)
+
+    if not room:
+        return
+
+    if len(room["players"]) < 2:
+        await query.answer("Butuh 2 player!", show_alert=True)
+        return
+
+    room["started"] = True
+    await start_game(context, code)
+    return
+
+
+# ❌ LEAVE ROOM
+if query.data.startswith("leave_"):
+    code = query.data.split("_")[1]
+    room = rooms.get(code)
+
+    if not room:
+        return
+
+    room["players"] = [p for p in room["players"] if p["id"] != user.id]
+
+    await context.bot.send_message(
+        chat_id=user.id,
+        text="Kamu keluar dari room"
+    )
+
+    if not room["players"]:
+        rooms.pop(code)
+        return
+
+    await show_room(context, room, code)
+    return
+    
     # ⚡ QUICK MATCH
     if query.data == "quick":
         if waiting_player is None:
