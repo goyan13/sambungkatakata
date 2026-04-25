@@ -126,3 +126,20 @@ async def timeout_turn(context):
     )
 
     await start_turn_timer(context, room_id)
+
+async def show_room(context, room, code):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    players = "\n".join([f"- {p['name']}" for p in room["players"]])
+
+    keyboard = [
+        [InlineKeyboardButton("▶️ Start Game", callback_data=f"start_{code}")],
+        [InlineKeyboardButton("❌ Keluar", callback_data=f"leave_{code}")]
+    ]
+
+    for p in room["players"]:
+        await context.bot.send_message(
+            chat_id=p["chat_id"],
+            text=f"🔐 Room {code}\n\n👥 Player:\n{players}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
