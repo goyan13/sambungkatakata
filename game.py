@@ -1,5 +1,4 @@
 import random
-import uuid
 
 from utils import broadcast, get_player, add_score, suggest_word, VALID_WORDS
 
@@ -14,13 +13,21 @@ MAX_PLAYER = 5
 # START GAME
 # =========================
 async def start_game(context, room_id):
-    room = rooms[room_id]
+    room = rooms.get(room_id)
+
+    if not room or not room["players"]:
+        return
+
+    if not VALID_WORDS:
+        await broadcast(context, room, "❌ Database kata kosong!")
+        return
 
     first_word = random.choice(list(VALID_WORDS))
 
     room["current_word"] = first_word
     room["used_words"] = [first_word]
     room["turn"] = 0
+    room["started"] = True
 
     players = "\n".join([p["name"] for p in room["players"]])
 
@@ -43,21 +50,26 @@ async def handle_word(update, context):
         return
 
     for room_id, room in rooms.items():
-        player = get_player(room, user.id)
+        if not room.get("started"):
+            continue
 
+        player = get_player(room, user.id)
         if not player:
             continue
+
+        if not room["players"]:
+            return
 
         current = room["players"][room["turn"]]
 
         if user.id != current["id"]:
-            continue
+            return
 
         last = room["current_word"]
 
         # ANTI STUCK
         if not any(w.startswith(last[-1]) for w in VALID_WORDS):
-            await broadcast(context, room, "⚠️ Game di-reset!")
+            await broadcast(context, room, "⚠️ Tidak ada kata lanjutan, game di-reset!")
             await start_game(context, room_id)
             return
 
@@ -74,6 +86,7 @@ async def handle_word(update, context):
             await update.message.reply_text("❌ Sudah dipakai!")
             return
 
+        # UPDATE GAME
         room["current_word"] = text
         room["used_words"].append(text)
 
@@ -111,7 +124,11 @@ async def timeout_turn(context):
     room_id = context.job.data["room_id"]
     room = rooms.get(room_id)
 
-    if not room:
+    if not room or not room.get("started"):
+        return
+
+    if not room["players"]:
+        rooms.pop(room_id, None)
         return
 
     current = room["players"][room["turn"]]
@@ -127,8 +144,14 @@ async def timeout_turn(context):
 
     await start_turn_timer(context, room_id)
 
+# =========================
+# ROOM UI
+# =========================
 async def show_room(context, room, code):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    if not room["players"]:
+        return
 
     players = "\n".join([f"- {p['name']}" for p in room["players"]])
 
@@ -138,8 +161,11 @@ async def show_room(context, room, code):
     ]
 
     for p in room["players"]:
-        await context.bot.send_message(
-            chat_id=p["chat_id"],
-            text=f"🔐 Room {code}\n\n👥 Player:\n{players}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=p["chat_id"],
+                text=f"🔐 Room {code}\n\n👥 Player:\n{players}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except:
+            pass
