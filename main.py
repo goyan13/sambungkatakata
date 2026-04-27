@@ -28,7 +28,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        "🎮 Sambung Kata\n\nPilih mode:",
+        "🎮 Sambung Kata\n
+        cara bermain :
+        -sambung kata dari huruf terakhir
+         contoh : ikan-nasi-ilmu-unta
+        -waktu 15 detik
+    
+    \nPilih mode:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
