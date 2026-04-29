@@ -57,9 +57,6 @@ async def handle_word(update, context):
         if not player:
             continue
 
-        if not room["players"]:
-            return
-
         current = room["players"][room["turn"]]
 
         if user.id != current["id"]:
@@ -67,7 +64,7 @@ async def handle_word(update, context):
 
         last = room["current_word"]
 
-        # ================= PUNISH FUNCTION =================
+        # ================= PUNISH =================
         async def punish():
             room["lives"][user.id] -= 1
             sisa = room["lives"][user.id]
@@ -87,7 +84,7 @@ async def handle_word(update, context):
 
             return False
 
-        # ================= VALIDATION =================
+        # ================= VALIDASI =================
         if text not in VALID_WORDS:
             if await punish():
                 return
@@ -106,12 +103,11 @@ async def handle_word(update, context):
             await update.message.reply_text("❌ Sudah dipakai!")
             return
 
-        # ================= UPDATE GAME =================
+        # ================= UPDATE =================
         room["current_word"] = text
         room["used_words"].append(text)
         room["word_count"] += 1
 
-        # 🎉 EVENT 100 KATA
         if room["word_count"] >= 100:
             for p in room["players"]:
                 await context.bot.send_photo(
@@ -135,11 +131,8 @@ async def handle_word(update, context):
         return
 
 # =========================
-# =========================
 # TIMER
 # =========================
-import asyncio
-
 async def start_turn_timer(context, room_id):
     room = rooms.get(room_id)
     if not room or not room["players"]:
@@ -147,7 +140,7 @@ async def start_turn_timer(context, room_id):
 
     current = room["players"][room["turn"]]
 
-    # kirim pesan awal timer
+    # kirim pesan awal
     msg_ids = []
     for p in room["players"]:
         try:
@@ -161,7 +154,7 @@ async def start_turn_timer(context, room_id):
 
     room["timer_msgs"] = msg_ids
 
-    # function countdown (edit pesan tiap detik)
+    # countdown
     async def countdown():
         for i in range(TURN_TIME - 1, 0, -1):
             await asyncio.sleep(1)
@@ -176,15 +169,14 @@ async def start_turn_timer(context, room_id):
                 except:
                     pass
 
-    # jalankan countdown paralel
     asyncio.create_task(countdown())
 
-    # hapus timer lama (biar nggak numpuk)
+    # reset timer lama
     job_name = f"timer_{room_id}"
     for job in context.job_queue.get_jobs_by_name(job_name):
         job.schedule_removal()
 
-    # timer utama (kalau waktu habis)
+    # timeout utama
     context.job_queue.run_once(
         timeout_turn,
         TURN_TIME,
@@ -192,7 +184,9 @@ async def start_turn_timer(context, room_id):
         name=job_name
     )
 
-
+# =========================
+# TIMEOUT
+# =========================
 async def timeout_turn(context):
     room_id = context.job.data["room_id"]
     room = rooms.get(room_id)
@@ -222,9 +216,9 @@ async def timeout_turn(context):
             f"⏰ {current['name']} telat! Nyawa: {room['lives'][uid]}"
         )
 
-    # lanjut ke turn berikutnya
     room["turn"] = room["turn"] % len(room["players"])
     await start_turn_timer(context, room_id)
+
 # =========================
 # ROOM UI
 # =========================
