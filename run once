@@ -1,3 +1,4 @@
+import asyncio
 import random
 from utils import broadcast, get_player, add_score, suggest_word, VALID_WORDS
 
@@ -143,16 +144,40 @@ async def start_turn_timer(context, room_id):
 
     current = room["players"][room["turn"]]
 
-    await broadcast(
-        context,
-        room,
-        f"⏱️ Giliran {current['name']} ({TURN_TIME} detik)"
-    )
+    msg_ids = []
+
+for p in room["players"]:
+    try:
+        msg = await context.bot.send_message(
+            chat_id=p["chat_id"],
+            text=f"⏱️ {current['name']}: {TURN_TIME}"
+        )
+        msg_ids.append((p["chat_id"], msg.message_id))
+    except:
+        pass
+
+room["timer_msgs"] = msg_ids
+
+async def countdown():
+    for i in range(TURN_TIME - 1, 0, -1):
+        await asyncio.sleep(1)
+
+        for chat_id, msg_id in room.get("timer_msgs", []):
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=f"⏱️ {current['name']}: {i}"
+                )
+            except:
+                pass
 
     job_name = f"timer_{room_id}"
 
     for job in context.job_queue.get_jobs_by_name(job_name):
         job.schedule_removal()
+
+    asyncio.create_task(countdown())
 
     context.job_queue.run_once(
         timeout_turn,
